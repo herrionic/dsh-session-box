@@ -169,11 +169,15 @@ the workspace is an identity rather than a shared directory.
 
 ## Development
 
+This repository is self-contained: `pnpm install` resolves every dependency
+from npm except the three `@sessionbox/*` packages vendored under `vendor/`
+(client, protocol, shared), which this plugin imports directly.
+
 ```sh
-pnpm --filter @sessionbox/dsh-plugin build      # esbuild bundle (dist/index.mjs)
-pnpm --filter @sessionbox/dsh-plugin typecheck
-pnpm --filter @sessionbox/dsh-plugin test       # activation + backend behaviour
-pnpm --filter @sessionbox/dsh-plugin probe      # read-only container capability probe
+pnpm build      # esbuild bundle (dist/index.mjs)
+pnpm typecheck
+pnpm test       # activation + backend behaviour
+pnpm probe      # read-only container capability probe
 ```
 
 `client/index.js` is the browser half. It is written by hand — the client module

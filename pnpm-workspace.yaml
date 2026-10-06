@@ -1,0 +1,8 @@
+packages:
+  - .
+  - vendor/*
+
+onlyBuiltDependencies:
+  - esbuild
+
+strictDepBuilds: false
