@@ -1,0 +1,38 @@
+# SessionBox execution targets for DeepSeek Harness.
+#
+# The plugin routes `ctx.fs`, `ctx.shell`, and `ctx.subprocess` per session: a
+# session bound to a container runs its file and shell work inside it, while
+# every other session keeps the host providers it had before. The host
+# providers are therefore NOT discarded — the plugin re-mounts them inside
+# isolated service realms (`ctx.isolate('fs')`, `ctx.isolate('shell')`,
+# `ctx.isolate('subprocess')`) and the routing providers delegate to them.
+#
+# That is why the four rows below are disabled: a service name allows exactly
+# one provider per realm, and the router has to be the one the outer realm
+# resolves. Disabling them here is what removes them from the outer realm; the
+# plugin puts them back in their own.
+#
+# The tool rows are deliberately untouched: which shell tool a session may use
+# depends on that session's execution world, so the plugin switches the catalog
+# per session at runtime instead of pinning it here.
+#
+# Configuration happens on the Settings page (namespace `sessionbox`):
+#   baseUrl  — the SessionBox server origin
+#   tokenRef — the credential-store name holding the API token
+# No configuration is required in this file, and no environment variable is read.
+
+- id: fs-sandbox
+  disabled: true
+
+- id: bash-sandbox
+  disabled: true
+
+- id: pwsh-sandbox
+  disabled: true
+
+- id: subprocess
+  disabled: true
+
+- insert:
+    - id: sessionbox
+      name: '@sessionbox/dsh-plugin'

@@ -1,0 +1,17 @@
+# Installed dependencies
+node_modules/
+
+# Build output (rebuilt with `pnpm build`)
+dist/
+
+# Packed artifacts and local backups from the repair scripts
+*.tgz
+*.bak-*
+*.frames-*
+
+# Tooling residue
+coverage/
+.vitest/
+*.log
+.DS_Store
+
