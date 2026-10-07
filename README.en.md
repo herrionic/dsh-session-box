@@ -178,7 +178,12 @@ harness. Only the three seams listed above are routed.
 - **The switch notice is best effort.** A session whose surface has no protected head cannot
   take the notice yet, so the binding is applied and the notice is skipped; the standing line
   in every request still states the target.
-- **Terminals and PTC are not supported in containers.**
+- **Terminals and PTC are not routed into the container; they run on the host.** A terminal
+  session starts through `ctx.subprocess.spawnTerminal` and PTC starts a Node process through
+  `ctx.subprocess`, while the subprocess seam forwards an allowlist of programs (by default
+  `rg` and `ripgrep`). Neither is on it, so a bound session that uses them gets the host's
+  shell and processes rather than the container's. PTC reads its bootstrap through `ctx.fs` —
+  that half is in the container — so its two halves land in different environments.
 - **`readText` above 8 MiB** returns `FS_TOO_LARGE`.
 - **`ripgrep` provisioning needs network and `sudo`** in the container image.
 - **Out-of-turn routing resolves by the longest matching path prefix.** A new binding wins for
