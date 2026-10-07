@@ -285,4 +285,31 @@ describe('the /sessionbox command', () => {
     expect((result as { text: string }).text).toContain('no-such-box')
     expect(ctx.sessionProjections.stateOf(session, 'executionTarget')?.target).toBeNull()
   })
+
+  it('withholds the terminal tools from a session bound to a container', async () => {
+    // The terminal tools open their shell through `ctx.subprocess.spawnTerminal`,
+    // and the subprocess seam forwards an allowlist of programs — so an
+    // unrestricted terminal in a bound session would open the host's shell.
+    const restrictions: Array<{ deny?: readonly string[] }> = []
+    ctx.provide('tools', {
+      restrict: (options: { deny?: readonly string[] }) => {
+        restrictions.push(options)
+        return () => {}
+      },
+    } as never)
+
+    const session = ctx.sessions.create(SessionId('bound-tools'), { meta: { cwd: hostRoot } })
+    await run('/sessionbox test-box', session)
+    const agent = {
+      session,
+      ctx: { get: (name: string) => (name === 'tools' ? ctx.get('tools') : undefined) },
+    }
+    ctx.emit('agent/created', { agent } as never)
+
+    const denied = restrictions.at(-1)?.deny ?? []
+    expect(denied).toContain('terminal_open')
+    expect(denied).toContain('terminal_list')
+    // The Windows host shell does not exist in a Linux container either.
+    expect(denied).toContain('pwsh')
+  })
 })

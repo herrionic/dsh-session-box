@@ -139,7 +139,8 @@ Harness 本身从不移动。会话、会话日志、投影、storage、凭据�
 - **chip 没有推送式失效通知。** 浏览器半边无法订阅本插件自己的事件（转发事件白名单属于 Harness），所以 chip 在挂载时和每次切换后重新读取目录。在别处做的改动会在下次挂载时体现。
 - **投影没有推送 API。** `executionTarget` 由会话日志派生，而 Harness 没有提供让它失效重算的接口，因此 chip 以插件自己的 Remote 目录为准，投影只作兜底。
 - **切换提示是尽力而为。** 表面还没有受保护首面的会话暂时无法接收该提示，此时绑定照常生效、提示被跳过；每次请求里的常驻说明仍然会写明执行环境。
-- **终端与 PTC 不会被路由进容器，它们会在宿主机上执行。** 终端会话通过 `ctx.subprocess.spawnTerminal` 启动，PTC 通过 `ctx.subprocess` 启动一个 Node 进程；子进程接缝是按**程序白名单**转发的（默认只有 `rg`、`ripgrep`），这两个都不在白名单里，所以绑定会话里使用它们拿到的是宿主机的 shell 与进程，而不是容器内的。PTC 还会经 `ctx.fs` 读取引导文件——那一半在容器内——因此它的两半落在不同环境里。
+- **终端工具在绑定会话里被禁用。** `terminal_open`、`terminal_send`、`terminal_read`、`terminal_signal`、`terminal_close`、`terminal_list` 会通过 `ctx.subprocess.spawnTerminal` 打开 shell，而子进程接缝是按**程序白名单**转发的（默认只有 `rg`、`ripgrep`），不设限制就会打开**宿主机**的 shell。所以绑定到容器时这几个工具直接从工具面上消失，而不是悄悄连回宿主机。
+- **PTC 无法用同样方式禁用，它仍会在宿主机上执行。** `run_code` 由 Harness 保留、**不受 deny 过滤**（`packages/core/tools/tests/ptc.spec.ts` 明确固定了这一行为），因此插件无法按会话关掉它。它在绑定会话里会经 `ctx.subprocess` 启动一个宿主机 Node 进程；同时它经 `ctx.fs` 读取引导文件——那一半在容器内——于是同一次调用的两半落在不同环境里。彻底修好需要 Harness 侧让 PTC 的子进程请求带上会话身份，或允许插件限制 `run_code`。
 - **`readText` 超过 8 MiB** 会返回 `FS_TOO_LARGE`。
 - **自动安装 `ripgrep` 需要容器镜像有网络与 `sudo`。**
 - **回合外的路由按最长匹配路径前缀解析。** 新绑定在它自己的回合内立即生效；回合外的调用使用注册表当前视图。

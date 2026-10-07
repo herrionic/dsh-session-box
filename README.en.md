@@ -178,12 +178,18 @@ harness. Only the three seams listed above are routed.
 - **The switch notice is best effort.** A session whose surface has no protected head cannot
   take the notice yet, so the binding is applied and the notice is skipped; the standing line
   in every request still states the target.
-- **Terminals and PTC are not routed into the container; they run on the host.** A terminal
-  session starts through `ctx.subprocess.spawnTerminal` and PTC starts a Node process through
-  `ctx.subprocess`, while the subprocess seam forwards an allowlist of programs (by default
-  `rg` and `ripgrep`). Neither is on it, so a bound session that uses them gets the host's
-  shell and processes rather than the container's. PTC reads its bootstrap through `ctx.fs` —
-  that half is in the container — so its two halves land in different environments.
+- **The terminal tools are withheld from a bound session.** `terminal_open`, `terminal_send`,
+  `terminal_read`, `terminal_signal`, `terminal_close`, and `terminal_list` open their shell
+  through `ctx.subprocess.spawnTerminal`, while the subprocess seam forwards an allowlist of
+  programs (by default `rg` and `ripgrep`). Unrestricted, they would open the *host's* shell,
+  so they are absent from a bound session's tool surface instead of quietly reaching the host.
+- **PTC cannot be withheld the same way, and still runs on the host.** `run_code` is reserved
+  by the harness and stays outside deny-list filtering (`packages/core/tools/tests/ptc.spec.ts`
+  pins that behaviour), so a plugin cannot switch it off per session. In a bound session it
+  starts a host Node process through `ctx.subprocess`, and reads its bootstrap through
+  `ctx.fs` — that half is in the container — so one call spans both environments. Fixing it
+  properly needs the harness to make PTC's subprocess request session-aware, or to let plugins
+  restrict `run_code`.
 - **`readText` above 8 MiB** returns `FS_TOO_LARGE`.
 - **`ripgrep` provisioning needs network and `sudo`** in the container image.
 - **Out-of-turn routing resolves by the longest matching path prefix.** A new binding wins for

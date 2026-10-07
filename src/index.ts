@@ -665,7 +665,7 @@ export class SessionBoxService extends TypertRemoteService {
     try {
       // `pwsh` runs on a Windows host and does not exist in a Linux container;
       // restricting it masks the inherited registration for this agent only.
-      disposers.push(tools.restrict({ deny: ['pwsh'] }))
+      disposers.push(tools.restrict({ deny: ['pwsh', ...CONTAINER_DENIED_TOOLS] }))
     } catch {
       // The preset may not offer a PowerShell tool at all.
     }
@@ -729,6 +729,24 @@ function contextText(boundary: ContainerBoundary | undefined, hostRoot: string):
     + `operate on that container's filesystem, where ${boundary.workspace} is this session's workspace; `
     + `${hostRoot} is only the harness-side identity of that workspace and is not shared with the container.`
 }
+
+/**
+ * Tools that cannot work inside a container and must not fall back to the host.
+ *
+ * The terminal tools open their shell through `ctx.subprocess.spawnTerminal`,
+ * and the subprocess seam forwards an allowlist of programs, so an unrestricted
+ * terminal in a bound session would open the *host's* shell — the one outcome
+ * the boundary exists to prevent. Denying them here makes the boundary honest:
+ * the tools are absent from a bound session instead of quietly reaching the host.
+ */
+const CONTAINER_DENIED_TOOLS = [
+  'terminal_open',
+  'terminal_send',
+  'terminal_read',
+  'terminal_signal',
+  'terminal_close',
+  'terminal_list',
+] as const
 
 /** The slice of the storage-domain facility this plugin uses. */
 interface StorageDomainFacility {
