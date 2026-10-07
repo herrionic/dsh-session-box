@@ -1,187 +1,220 @@
-# `@sessionbox/dsh-plugin`
+# @sessionbox/dsh-plugin
 
-SessionBox execution targets for DeepSeek Harness: bind a session to a
-SessionBox container and that session's file and shell work happens inside it,
-while every other session keeps running on the host.
+Run a DeepSeek Harness session inside a SessionBox container.
 
-```text
-one DSH host process
-  ├─ ctx.fs         ──► container session → SessionBox;  otherwise → host backend
-  ├─ ctx.shell      ──► same
-  ├─ ctx.subprocess ──► same, opt-in per program (ripgrep)
-  └─ sessionProjection 'executionTarget'
-        ├─ Host command `/sessionbox <container>`   ← the only write path
-        └─ input-bar chip                           ← reads the Remote catalog, submits the command
-```
+One session, one execution world. Bind a session to a container and its file, shell, and
+search work happens inside that container, while the harness, its session storage, and every
+other session keep running on the machine hosting it. Switch the session back to the host and
+it behaves exactly as it did before this plugin existed.
 
-Nothing about the model's tool set changes: `read`, `write`, `edit`, `glob`,
-`grep`, and the shell tool keep their names and schemas and simply execute in
-whichever world the session is bound to.
+- **Per session, not per process.** Two sessions can run in two different containers at the
+  same time, and a third can stay on the host.
+- **Bindings are plugin state, never session data.** They live in a storage domain
+  (`~/.dsh/storages/sessionbox.json`), so the session log stays readable by a harness that
+  does not have this plugin installed.
+- **The host stays intact.** The host filesystem, shell, and subprocess providers are loaded
+  into isolated realms and the routing providers delegate to them, so a session on the host
+  behaves as before.
+- **No silent fallback.** A target that cannot be resolved is reported instead of quietly
+  running the session somewhere the person did not choose.
+
+## Contents
+
+- [Requirements](#requirements)
+- [Install](#install)
+- [Configure](#configure)
+- [Use](#use)
+- [How it works](#how-it-works)
+- [Path mapping](#path-mapping)
+- [What stays on the host](#what-stays-on-the-host)
+- [Security notes](#security-notes)
+- [Known limitations](#known-limitations)
+- [Troubleshooting](#troubleshooting)
+- [Development](#development)
+- [License](#license)
+
+## Requirements
+
+- **DeepSeek Harness** `0.2.0-rc.2`. Every harness package this plugin declares is published
+  on npm, so no harness checkout is needed to install or build it.
+- **Node.js** `^22.19` or `>=24`.
+- A reachable **SessionBox server** and an API token for it.
+- A Linux container image with `bash`. `ripgrep` is installed once with `apt` when the image
+  lacks it (`provisionRipgrep`).
 
 ## Install
 
-Install the package as a profile bundle (the plugin manager, or `dsh` profile
-tooling) and enable it. The bundle patch disables the host `fs`, `shell`, and
-`subprocess` rows — a Cordis service name allows exactly one provider per realm,
-and the routers have to be that provider — and the plugin re-mounts those same
-host implementations inside isolated realms (`ctx.isolate('fs')` and friends) so
-nothing is lost: an unbound session behaves exactly as it did before.
+The plugin is an ordinary DeepSeek Harness plugin package: the harness profile names it in a
+row and provides the package.
+
+1. Make the package available to the profile. Until it is published, use a local checkout or a
+   git dependency in the profile's `package.json`:
+
+   ```json
+   {
+     "dependencies": {
+       "@sessionbox/dsh-plugin": "link:/absolute/path/to/dsh-session-box"
+     }
+   }
+   ```
+
+2. Add the row to the profile's `cordis.patch.yml`:
+
+   ```yaml
+   - id: sessionbox
+     name: "@sessionbox/dsh-plugin"
+     config:
+       baseUrl: http://127.0.0.1:8787
+       tokenRef: SESSIONBOX_TOKEN
+   ```
+
+3. Restart the harness.
+
+**Enable the row before startup.** The plugin replaces the host `fs`, `shell`, and `subprocess`
+rows, and a live enable re-composes the running harness, which the session controller rejects
+(`file-upload: Agent resolver is already registered`). Enable it in configuration and start the
+harness with it already in place.
 
 ## Configure
 
-Everything is on the settings page, under the namespace of the installed entry
-(`sessionbox`). No YAML editing, no environment variables.
+All settings are editable from the GUI: **Settings → SessionBox**. The token itself never
+enters the configuration file; it is written to the credential store under the configured name.
 
-| Field | Default | Meaning |
+| Setting | Default | Meaning |
 | --- | --- | --- |
-| `baseUrl` | `http://127.0.0.1:8787` | SessionBox server origin |
-| `tokenRef` | `SESSIONBOX_TOKEN` | **name** of the credential holding the API token |
-| `containerRoot` | `/workspace` | container-side root the session workspace maps onto |
-| `defaultTimeoutMs` | `120000` | per-exec deadline |
-| `maxTimeoutMs` | `600000` | upper bound for a caller-supplied deadline |
-| `maxOutputBytes` | `1048576` | retained bytes per output stream |
-| `requestTimeoutMs` | `30000` | per-request deadline for agent-protocol operations |
-| `provisionRipgrep` | `true` | install ripgrep inside a bound container when missing |
-| `containerPrograms` | `["rg", "ripgrep"]` | programs whose `ctx.subprocess` children run in the container |
+| `baseUrl` | `http://127.0.0.1:8787` | SessionBox server origin. |
+| `tokenRef` | `SESSIONBOX_TOKEN` | Name of the credential holding the API token. |
+| `containerRoot` | `/workspace` | Working directory inside a bound container. |
+| `defaultTarget` | `host` | Target a newly created session starts on: a container name or id, or `host`. |
+| `defaultTimeoutMs` | `120000` | Default timeout for container operations. |
+| `maxTimeoutMs` | `600000` | Upper bound a caller may request. |
+| `requestTimeoutMs` | `30000` | Per-request deadline for agent-protocol calls. |
+| `maxOutputBytes` | `1048576` | Retained bytes per output stream. |
+| `provisionRipgrep` | `true` | Install `ripgrep` in a bound container when it is missing. |
+| `containerPrograms` | `rg`, `ripgrep` | Program basenames whose subprocesses run inside a bound container. |
 
-`tokenRef` is a `credential-ref`, not a secret: the settings form writes the
-token into the credential store, and no plaintext token ever reaches a
-configuration file. Every field is volatile, so an edit applies to the next
-operation with no restart.
+`defaultTarget` applies when a session is created. A name that cannot be resolved is reported
+and the session starts on the host; the plugin never substitutes a target silently.
 
 ## Use
 
-In a session, either type the command or use the chip at the left of the input
-bar (next to the permission controls):
+The execution target is chosen per session, from the input bar.
 
-```text
-/sessionbox                 # current target + the containers you can pick
-/sessionbox new-world       # run this session inside container "new-world"
-/sessionbox host            # go back to the host
+- **The chip** next to the composer shows the session's current target and switches it. It
+  re-reads the container list when it mounts and after every switch.
+- **The command** does the same thing and is the single write path:
+
+  ```
+  /sessionbox new-world     # bind this session to that container
+  /sessionbox host          # send it back to the machine hosting the harness
+  /sessionbox               # report the current target and the available containers
+  ```
+
+A switch takes effect immediately: the next tool call in that session runs in the new world.
+The model is told about the change, both as a standing line in every assembled request and as a
+one-off notice in the transcript.
+
+## How it works
+
+A session's binding is one record in the plugin's own storage. Routing reads it synchronously
+from memory, so no tool call has to wait on the store.
+
+```
+Session -> binding -+- ctx.fs         -> container filesystem | host filesystem
+                    +- ctx.shell      -> bash in container     | host shell
+                    +- ctx.subprocess -> allowlisted programs  | host runtime
 ```
 
-Selecting a container records two things on the session: a log-only
-`sessionbox/target` event (the durable binding, replayed on resume) and a
-user-role reminder that tells the model what changed. The session then has
+- **Routing providers, not replacements.** The host providers are loaded into isolated realms
+  and the routers delegate to them. Nothing about a host session changes.
+- **Per-agent tool surface.** A container session has `pwsh` denied (it is a Windows host tool
+  and the container is Linux) and gains `bash`. Switching back restores the original surface.
+- **Allowlisted subprocesses.** `ctx.subprocess` is shared with host infrastructure — git
+  probes, out-of-process agents — so container routing is opt-in per program. The default
+  covers the harness's packaged `ripgrep`, which `glob` and `grep` spawn.
+- **One record per session.** The binding survives a restart because it is stored; the session
+  log only carries the notices that explain the switch to the model.
 
-- `executionTarget` = `{ kind: 'container', containerId, name, workspace, hostRoot }`,
-  which the chip and any other client read through the session projection;
-- a standing runtime-context line in every assembled request naming the
-  container and the path mapping;
-- a switched tool catalog: `bash` in the container, `pwsh` on a Windows host.
+## Path mapping
 
-Containers are never created implicitly. The plugin only ever connects to a
-container that already exists, chosen by name or id.
+A bound session sees the container, not the host.
 
-## How paths map
+| The session asks for | It gets |
+| --- | --- |
+| a relative path | the path under `containerRoot` in the container |
+| an absolute POSIX path (`/etc/hostname`) | that path in the container |
+| the host workspace path | `containerRoot` in the container — the host spelling is an identity, not a shared directory |
+| any other host path | nothing: reads report the file does not exist, writes are refused |
 
-A container session's `header.cwd` stays a real host directory. DSH validates
-that path with `node:fs` on every workspace load, and a container path there
-would make the session invalid and drop it from the sidebar, so the host
-spelling stays and the plugin translates:
-
-```text
-host  <session cwd>\src\main.ts   ⇄   container  /workspace/src/main.ts
-```
-
-Input may be written either way: a host path below the session workspace, a
-relative path, or an absolute container path such as `/etc/hostname`. Tool
-results keep showing the host spelling so the model's own working directory
-stays consistent, and the standing context line states the container root.
-
-The two filesystems are **not** the same data. The container has its own
-`/workspace`; files that were in the host directory before the switch are not
-visible in the container, and files written in the container do not appear on
-the host.
+The last row is deliberate. The host path does not exist in the container, so reporting
+"not found" is the truthful answer, and a write is refused rather than silently landing
+somewhere the person did not intend.
 
 ## What stays on the host
 
-| Seam | Behaviour |
-| --- | --- |
-| `ctx.fs`, `ctx.shell` | routed per session, exactly |
-| `ctx.subprocess` | routed only for the configured programs, in a turn whose cwd maps into the container |
-| git probes behind change snapshots, `open-in-app`, out-of-process subagents | always the host |
+The harness never moves. Sessions, the session log, projections, storage, credentials, the
+GUI, the model connection, and host-side observers all keep running on the machine hosting the
+harness. Only the three seams listed above are routed.
 
-`ctx.subprocess` is deliberately opt-in per program. The seam is shared by agent
-work and host infrastructure, and an in-turn `git` probe is indistinguishable
-from an in-turn `rg`; routing an unrouted program to the host degrades a
-container session's convenience, while misrouting a host probe would corrupt
-host-side observations.
+## Security notes
 
-`glob` and `grep` spawn ripgrep by the absolute path of the harness's packaged
-binary, which cannot exist in a Linux container. The router rewrites that
-argument to the container's own `rg`, and the plugin provisions ripgrep into a
-bound container when the image lacks it (`sudo apt-get install -y ripgrep`,
-once per container; `provisionRipgrep: false` disables it).
+- The API token is stored in the credential store, not in configuration.
+- A bound session can write anywhere inside its container, subject to the session's own file
+  policy. Container-wide writes are intentional: the container is the boundary, and a
+  permission error from the container's own user account is reported as such.
+- Host paths outside the session workspace are not reachable from a bound session.
+- The host file sandbox is unchanged for sessions that run on the host.
 
 ## Known limitations
 
-- **Out-of-turn calls in a shared workspace.** `ctx.fs` receives only a `cwd`,
-  so a call that arrives outside an agent turn (GUI file preview, background
-  work) is routed by longest path prefix over the bound sessions' host roots. If
-  two container sessions share one workspace directory, the most recently bound
-  one wins. Calls made *inside* a turn are always exact, because the initiator
-  identifies the session.
-- **Paths outside the session workspace stay on the host.** The binding owns the
-  session's *workspace*, not the whole filesystem: `header.cwd` maps onto
-  `/workspace`, and a path the mapping cannot express — a git repository
-  enclosing the workspace, the workspace registry, a file-tree walk — is served
-  by the host backend. Refusing those would fail the turn rather than leave one
-  path behind, because the harness's own observers run through the same seam
-  (change snapshots read `.git` above the workspace). A container session
-  therefore still sees host paths outside its workspace.
-- **No push invalidation for the picker.** The browser's forwarded-event
-  allowlist lives in `@deepseek-ai/dsh-api-remotes`, which a plugin cannot
-  extend, so the chip re-reads the container list each time it opens instead of
-  being notified when the list changes.
-- **No `watch`.** The agent protocol has no watch operation, so a container
-  session's file tree refreshes on re-read rather than on filesystem events.
-- **Host-side observers see the host directory.** The workspace registry, change
-  snapshots, the `@` file index, AGENTS.md discovery, and skill discovery all
-  read `header.cwd` with `node:fs`. They keep working, but they describe the host
-  directory, not the container's workspace. The model is told the mapping.
-- **Text reads are bounded by the protocol.** One `file.read` response is capped
-  at 8 MiB, and paging a file through offset windows could split a multi-byte
-  character, so a text file larger than that fails with `FS_TOO_LARGE` rather
-  than arriving corrupted. Binary reads have no offset, so `readByteRange`
-  reads the whole file (bounded the same way) and slices.
-- **Shell confinement inside the container is the container.** `read-only` and
-  `workspace-write` are enforced on `writeText`/`editText` — a write outside the
-  container workspace fails with `FS_SANDBOX_DENIED` — but a command that writes
-  is not intercepted: the container is the boundary.
-- **Persistent terminals and PTC are not routed.** `spawnTerminal` reports that
-  terminals are unavailable in a container, and the PTC runtime needs Node
-  inside the container, which the stock image does not ship.
+- **No push invalidation for the chip.** The browser half cannot subscribe to the plugin's own
+  events (the forwarded-event allowlist belongs to the harness), so the chip re-reads the
+  catalog when it mounts and after a switch. A change made elsewhere appears on the next mount.
+- **The projection has no push API.** `executionTarget` is derived from the session log and the
+  harness offers no way to invalidate it, so the plugin's Remote catalog is the authoritative
+  source for the chip and the projection is a fallback.
+- **The switch notice is best effort.** A session whose surface has no protected head cannot
+  take the notice yet, so the binding is applied and the notice is skipped; the standing line
+  in every request still states the target.
+- **Terminals and PTC are not supported in containers.**
+- **`readText` above 8 MiB** returns `FS_TOO_LARGE`.
+- **`ripgrep` provisioning needs network and `sudo`** in the container image.
+- **Out-of-turn routing resolves by the longest matching path prefix.** A new binding wins for
+  calls made inside its own turn; calls outside a turn use the registry's current view.
 
-## Model experience
+## Troubleshooting
 
-Token and cache effects:
-
-- Switching target changes the tool catalog (`bash` ⇄ `pwsh`) and adds one
-  user-role reminder, so the first request after a switch rebuilds its prompt
-  prefix. Steady state — no switches — is prefix-stable.
-- The standing execution-target line is part of the runtime context, which the
-  harness already re-renders per request.
-
-The model is told three things it cannot infer: which filesystem its tools now
-touch, that the container root is `/workspace`, and that the host spelling of
-the workspace is an identity rather than a shared directory.
+| Symptom | Check |
+| --- | --- |
+| The chip shows `host` while the session runs in a container | Hover the chip: the tooltip ends with `[id=... catalog=... listed=... projection=...]`. `listed=true` means the host reported the binding. |
+| No containers in the picker | Settings → SessionBox: the server URL and the token, then the container list at the bottom of that page. |
+| The plugin did not activate | The row must be enabled before startup; a live enable is rejected by the session controller. |
+| `glob` and `grep` fail in a container | `ripgrep` is missing and could not be installed. Check `provisionRipgrep` and the container's network. |
+| A tool call reports a permission error | The container's own user account cannot write that path. Raise it inside the container (`sudo`) as you would on any Linux host. |
 
 ## Development
 
-This repository is self-contained: `pnpm install` resolves every dependency
-from npm except the three `@sessionbox/*` packages vendored under `vendor/`
-(client, protocol, shared), which this plugin imports directly.
+This repository is self-contained: `pnpm install` resolves every dependency from npm except the
+three `@sessionbox/*` packages vendored under `vendor/` (client, protocol, shared), which this
+plugin imports directly.
 
 ```sh
-pnpm build      # esbuild bundle (dist/index.mjs)
+pnpm install
+pnpm build       # esbuild bundle (dist/index.mjs)
 pnpm typecheck
-pnpm test       # activation + backend behaviour
-pnpm probe      # read-only container capability probe
+pnpm test        # activation, routing, and container-backend behaviour
+pnpm probe       # read-only container capability probe against a real deployment
 ```
 
-`client/index.js` is the browser half. It is written by hand — the client module
-registry serves the file's bytes straight into the page, where it registers
-itself with `window.__ModuleLoader__` — so it needs no build step. It mounts its
-own Remote namespace (`ctx.remote.$mount`) because the client's namespace list is
-fixed in `@deepseek-ai/dsh-api-remotes`.
+The container tests self-skip without credentials. To run them, set `SESSIONBOX_URL` and
+`SESSIONBOX_TOKEN` in the environment.
+
+`client/index.js` is the browser half. It is written by hand — the client module registry
+serves the file's bytes straight into the page, where it registers itself with
+`window.__ModuleLoader__` — so it needs no build step. It mounts its own Remote namespace
+(`ctx.remote.$mount`) because the client's namespace list is fixed in
+`@deepseek-ai/dsh-api-remotes`.
+
+## License
+
+MIT — see [LICENSE](LICENSE).

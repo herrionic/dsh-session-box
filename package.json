@@ -2,6 +2,28 @@
   "name": "@sessionbox/dsh-plugin",
   "version": "0.2.0",
   "description": "SessionBox execution targets for DeepSeek Harness: bind a session to a container and run its file and shell tools inside it",
+  "license": "MIT",
+  "author": "Herry-too",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Herry-too/dsh-session-box.git"
+  },
+  "homepage": "https://github.com/Herry-too/dsh-session-box#readme",
+  "bugs": {
+    "url": "https://github.com/Herry-too/dsh-session-box/issues"
+  },
+  "keywords": [
+    "sessionbox",
+    "deepseek-harness",
+    "dsh",
+    "cordis",
+    "plugin",
+    "container",
+    "sandbox"
+  ],
+  "engines": {
+    "node": "^22.19 || >=24"
+  },
   "private": true,
   "type": "module",
   "main": "dist/index.mjs",
