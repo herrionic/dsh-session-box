@@ -36,7 +36,6 @@
     "build": "esbuild src/index.ts --bundle --format=esm --platform=node --target=node22 --outfile=dist/index.mjs --external:@deepseek-ai/*",
     "typecheck": "tsc --noEmit",
     "test": "vitest run --passWithNoTests",
-    "smoke": "tsx scripts/smoke.ts",
     "probe": "tsx scripts/probe.ts"
   },
   "peerDependencies": {
