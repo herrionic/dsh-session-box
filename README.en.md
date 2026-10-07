@@ -1,8 +1,8 @@
-# @sessionbox/dsh-plugin
+# dsh-session-box
 
 **English** | [中文](README.md)
 
-Run a DeepSeek Harness session inside a [SessionBox](https://github.com/herrionic/session-box) container.
+The DeepSeek Harness plugin `@sessionbox/dsh-plugin`: run a session inside a [SessionBox](https://github.com/herrionic/session-box) container.
 
 One session, one execution world. Bind a session to a container and its file, shell, and
 search work happens inside that container, while the harness, its session storage, and every

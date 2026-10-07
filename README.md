@@ -1,8 +1,8 @@
-# @sessionbox/dsh-plugin
+# dsh-session-box
 
 [English](README.en.md) | **中文**
 
-把 [DeepSeek Harness](https://github.com/deepseek-ai) 的会话跑在 [SessionBox](https://github.com/herrionic/session-box) 容器里。
+DeepSeek Harness 插件 `@sessionbox/dsh-plugin`：把 [DeepSeek Harness](https://github.com/deepseek-ai) 的会话跑在 [SessionBox](https://github.com/herrionic/session-box) 容器里。
 
 一个会话一个执行环境：把会话绑定到容器后，它的文件、命令与搜索操作都在容器内进行，而 Harness 本身、会话存储以及其它会话仍然运行在宿主机上。切回宿主机后，该会话的行为与安装本插件之前完全一致。
 
