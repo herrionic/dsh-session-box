@@ -169,31 +169,17 @@ harness. Only the three seams listed above are routed.
 
 ## Known limitations
 
-- **No push invalidation for the chip.** The browser half cannot subscribe to the plugin's own
-  events (the forwarded-event allowlist belongs to the harness), so the chip re-reads the
-  catalog when it mounts and after a switch. A change made elsewhere appears on the next mount.
-- **The projection has no push API.** `executionTarget` is derived from the session log and the
-  harness offers no way to invalidate it, so the plugin's Remote catalog is the authoritative
-  source for the chip and the projection is a fallback.
-- **The switch notice is best effort.** A session whose surface has no protected head cannot
-  take the notice yet, so the binding is applied and the notice is skipped; the standing line
-  in every request still states the target.
-- **The terminal tools are withheld from a bound session.** `terminal_open`, `terminal_send`,
-  `terminal_read`, `terminal_signal`, `terminal_close`, and `terminal_list` open their shell
-  through `ctx.subprocess.spawnTerminal`, while the subprocess seam forwards an allowlist of
-  programs (by default `rg` and `ripgrep`). Unrestricted, they would open the *host's* shell,
-  so they are absent from a bound session's tool surface instead of quietly reaching the host.
-- **PTC cannot be withheld the same way, and still runs on the host.** `run_code` is reserved
-  by the harness and stays outside deny-list filtering (`packages/core/tools/tests/ptc.spec.ts`
-  pins that behaviour), so a plugin cannot switch it off per session. In a bound session it
-  starts a host Node process through `ctx.subprocess`, and reads its bootstrap through
-  `ctx.fs` — that half is in the container — so one call spans both environments. Fixing it
-  properly needs the harness to make PTC's subprocess request session-aware, or to let plugins
-  restrict `run_code`.
-- **`readText` above 8 MiB** returns `FS_TOO_LARGE`.
-- **`ripgrep` provisioning needs network and `sudo`** in the container image.
-- **Out-of-turn routing resolves by the longest matching path prefix.** A new binding wins for
-  calls made inside its own turn; calls outside a turn use the registry's current view.
+- **A bound session has no terminal tools.** A terminal opens the host's shell, so the
+  `terminal_*` tools are absent once a session is bound to a container. Use the `bash` tool for
+  interactive commands; it runs inside the container.
+- **`run_code` (PTC) still executes on the host in a bound session.** The harness reserves that
+  tool against plugin restriction, so it cannot be switched off per session. For strict
+  isolation, leave PTC disabled in the Agent preset.
+- **After a switch made with `/sessionbox`, the input-bar chip can still show the old target.**
+  Switching away and back refreshes it.
+- **Two deployment conditions inside a container:** reading a file above 8 MiB reports
+  `FS_TOO_LARGE`, and `glob` and `grep` are unavailable when the image lacks `ripgrep` and it
+  cannot be installed.
 
 ## Troubleshooting
 
