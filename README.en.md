@@ -49,8 +49,17 @@ it behaves exactly as it did before this plugin existed.
 The plugin is an ordinary DeepSeek Harness plugin package: the harness profile names it in a
 row and provides the package.
 
-1. Make the package available to the profile. Until it is published, use a local checkout or a
-   git dependency in the profile's `package.json`:
+1. **Build it first.** The plugin is loaded from its build output (`dist/index.mjs`), and `dist/`
+   is not tracked:
+
+   ```sh
+   pnpm install
+   pnpm build
+   ```
+
+2. Make the package resolvable by the profile. **The profile's `package.json` must declare it** —
+   a configuration row alone is not enough, and a row whose package cannot be resolved fails
+   with `failed to import`:
 
    ```json
    {
@@ -60,7 +69,10 @@ row and provides the package.
    }
    ```
 
-2. Add the row to the profile's `cordis.patch.yml`:
+   Run `pnpm install` once in the profile directory to create the link. `prepare` does not run
+   for a `link:` dependency, so build it yourself; a git dependency builds automatically.
+
+3. Add the row to the profile's `cordis.patch.yml`:
 
    ```yaml
    - id: sessionbox
@@ -70,12 +82,18 @@ row and provides the package.
        tokenRef: SESSIONBOX_TOKEN
    ```
 
-3. Restart the harness.
+4. Restart the harness.
 
 **Enable the row before startup.** The plugin replaces the host `fs`, `shell`, and `subprocess`
 rows, and a live enable re-composes the running harness, which the session controller rejects
 (`file-upload: Agent resolver is already registered`). Enable it in configuration and start the
 harness with it already in place.
+
+> **If that row fails to load:** the plugin provides `fs`, `shell`, and `subprocess`, so a failed
+> import leaves a batch of entries stuck at `pending (waiting for service: fs / shell /
+> subprocess)` — permission presets, the session controller, terminals, workspace files. Those
+> plugins are not broken; the three services are missing. Disable the `sessionbox` row (or add
+> the dependency from step 2) and restart.
 
 ## Configure
 

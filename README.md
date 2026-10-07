@@ -37,7 +37,14 @@ DeepSeek Harness 插件 `@sessionbox/dsh-plugin`：把 [DeepSeek Harness](https:
 
 本插件就是一个普通的 DeepSeek Harness 插件包：由 Harness profile 在配置行里声明，并由 profile 提供该包。
 
-1. 让 profile 能找到这个包。在它发布到 npm 之前，用本地路径或 git 依赖写进 profile 的 `package.json`：
+1. **先构建。** 插件加载的是构建产物（`dist/index.mjs`），而 `dist/` 不进版本库：
+
+   ```sh
+   pnpm install
+   pnpm build
+   ```
+
+2. 让 profile 能找到这个包。**profile 的 `package.json` 必须声明它**——只写配置行是不够的，Harness 解析不到包时那一行会以 `failed to import` 失败：
 
    ```json
    {
@@ -47,7 +54,9 @@ DeepSeek Harness 插件 `@sessionbox/dsh-plugin`：把 [DeepSeek Harness](https:
    }
    ```
 
-2. 在 profile 的 `cordis.patch.yml` 里加上配置行：
+   改完在 profile 目录里执行一次 `pnpm install`（它会建立符号链接）。用 `link:` 时 `prepare` 不会自动运行，所以要自己先 `pnpm build`；用 git 依赖时 `prepare` 会自动构建。
+
+3. 在 profile 的 `cordis.patch.yml` 里加上配置行：
 
    ```yaml
    - id: sessionbox
@@ -57,9 +66,11 @@ DeepSeek Harness 插件 `@sessionbox/dsh-plugin`：把 [DeepSeek Harness](https:
        tokenRef: SESSIONBOX_TOKEN
    ```
 
-3. 重启 Harness。
+4. 重启 Harness。
 
 **必须在启动前启用。** 本插件会替换宿主机的 `fs`、`shell`、`subprocess` 三行；在运行中启用会触发 Harness 重新组装，而会话控制器会拒绝这种重组（`file-upload: Agent resolver is already registered`）。请在配置里启用后，带着它一起启动 Harness。
+
+> **如果这一行加载失败：** 插件要提供 `fs`、`shell`、`subprocess`，一旦它导入失败，Harness 里会有一批条目卡在 `pending (waiting for service: fs / shell / subprocess)`（权限、会话控制器、终端、工作区等）。那不是那些插件坏了，而是缺这三个服务。恢复办法：在配置里停用 `sessionbox` 这一行（或补上第 2 步的依赖）后重启。
 
 ## 配置
 
