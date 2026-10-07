@@ -2,7 +2,7 @@
 
 **English** | [中文](README.md)
 
-Run a DeepSeek Harness session inside a [SessionBox](https://github.com/Herry-too/session-box) container.
+Run a DeepSeek Harness session inside a [SessionBox](https://github.com/herrionic/session-box) container.
 
 One session, one execution world. Bind a session to a container and its file, shell, and
 search work happens inside that container, while the harness, its session storage, and every

@@ -3,14 +3,14 @@
   "version": "0.2.0",
   "description": "SessionBox execution targets for DeepSeek Harness: bind a session to a container and run its file and shell tools inside it",
   "license": "MIT",
-  "author": "Herry-too",
+  "author": "herrionic",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Herry-too/dsh-session-box.git"
+    "url": "git+https://github.com/herrionic/dsh-session-box.git"
   },
-  "homepage": "https://github.com/Herry-too/dsh-session-box#readme",
+  "homepage": "https://github.com/herrionic/dsh-session-box#readme",
   "bugs": {
-    "url": "https://github.com/Herry-too/dsh-session-box/issues"
+    "url": "https://github.com/herrionic/dsh-session-box/issues"
   },
   "keywords": [
     "sessionbox",
