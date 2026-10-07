@@ -47,7 +47,27 @@ it behaves exactly as it did before this plugin existed.
 ## Install
 
 The plugin is an ordinary DeepSeek Harness plugin package: the harness profile names it in a
-row and provides the package.
+row and provides the package. There are two ways to install it; either works.
+
+### Option 1: the DSH plugin manager
+
+1. Open the plugin manager, choose **add plugin**, and enter this repository:
+
+   ```
+   git@github.com:herrionic/dsh-session-box.git
+   ```
+
+   (A private repository needs working git credentials on the machine: an SSH key or an HTTPS
+   token.)
+
+2. **Enabling it right after the install reports an error — that is expected.** The plugin
+   replaces the host `fs`, `shell`, and `subprocess` rows, and a live enable re-composes the
+   running harness, which the session controller rejects (`file-upload: Agent resolver is
+   already registered`). **Restart DSH and it takes effect.**
+
+3. **Uninstalling reports an error too**, for exactly the same reason. Disable it and restart.
+
+### Option 2: wire it into the profile by hand
 
 1. **Build it first.** The plugin is loaded from its build output (`dist/index.mjs`), and `dist/`
    is not tracked:
@@ -84,10 +104,8 @@ row and provides the package.
 
 4. Restart the harness.
 
-**Enable the row before startup.** The plugin replaces the host `fs`, `shell`, and `subprocess`
-rows, and a live enable re-composes the running harness, which the session controller rejects
-(`file-upload: Agent resolver is already registered`). Enable it in configuration and start the
-harness with it already in place.
+**Enable the row before startup.** Whichever option you used, the row has to be in place when the
+harness starts; enabling it live triggers the recomposition described above.
 
 > **If that row fails to load:** the plugin provides `fs`, `shell`, and `subprocess`, so a failed
 > import leaves a batch of entries stuck at `pending (waiting for service: fs / shell /
