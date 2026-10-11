@@ -330,6 +330,10 @@ export class RoutingFileSystem extends FileSystem {
       // refused separately by `outsideWorkspace`.
       return mapsInto(bound, absolute) ? bound : undefined
     }
+    // A turn owns this call, so its binding is authoritative: an unbound
+    // initiator means the host, never another container that happens to
+    // cover the same workspace path.
+    if (initiator !== undefined) return undefined
     return this.config.targets.containerForPath(absolute)
   }
 
