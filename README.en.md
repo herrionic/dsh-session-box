@@ -20,6 +20,12 @@ it behaves exactly as it did before this plugin existed.
 - **No silent fallback.** A target that cannot be resolved is reported instead of quietly
   running the session somewhere the person did not choose.
 
+> **Alpha.** This project, and the SessionBox it targets, is in an alpha stage: it can be
+> deployed and used today, and it is aimed at personal use and early trials. Features are
+> still missing and known issues remain; the functionality, APIs, and data formats can
+> change without backward compatibility. Trials and feedback are welcome — back up your
+> data before using or upgrading.
+
 ## Contents
 
 - [Requirements](#requirements)
