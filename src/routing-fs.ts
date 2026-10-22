@@ -28,7 +28,7 @@ import type {
 } from '@deepseek-ai/dsh-fs'
 import type { SandboxExecutionPolicy, SandboxMode } from '@deepseek-ai/dsh-sandbox'
 import { contains as containerContains } from './container-fs.ts'
-import { hostContains, toContainerPath, toHostPath } from './target.ts'
+import { hostBase, hostContains, toContainerPath, toContainerPathFrom, toHostPath } from './target.ts'
 import type { ContainerFileSystem } from './container-fs.ts'
 import type { ContainerAccess, ContainerBoundary } from './types.ts'
 import type { ExecutionTargetRegistry } from './target.ts'
@@ -110,27 +110,23 @@ export class RoutingFileSystem extends FileSystem {
   ): Promise<FsTarget> {
     opts?.signal?.throwIfAborted()
     const bound = this.boundContainer()
-    if (bound !== undefined && !filePath.startsWith('/')) {
-      const absolute = path.isAbsolute(filePath)
-        ? path.normalize(filePath)
-        : path.resolve(opts?.cwd ?? this.config.fallbackCwd, filePath)
-      if (!mapsInto(bound, absolute)) {
-        // A host path outside the mapped workspace does not exist in this
-        // session's world. Answering as the filesystem does for a missing path
-        // keeps the host unreadable — and leaves the harness's own probes (a git
-        // repository above the workspace, a file-tree walk) degraded rather than
-        // failing the turn.
-        const synthetic = `${UNMAPPED_ROOT}/${absolute.replace(/[\\/]+/gu, '_')}`
-        return { targetKey: encode(bound, this.initiatorId(), synthetic), displayPath: synthetic }
-      }
+    if (bound !== undefined && !path.isAbsolute(filePath) && !filePath.startsWith('/')) {
+      // A relative path names the session's own world, whichever spelling its
+      // working directory currently has: the host root before a directory
+      // change, or the container path such a change resolved to.
+      const containerPath = toContainerPathFrom(bound, filePath, opts?.cwd)
+      // A host path outside the mapped workspace does not exist in this
+      // session's world. Answering as the filesystem does for a missing path
+      // keeps the host unreadable — and leaves the harness's own probes (a git
+      // repository above the workspace, a file-tree walk) degraded rather than
+      // failing the turn.
+      return containerContains(bound.workspace, containerPath)
+        ? this.routed(bound, containerPath)
+        : this.unmapped(bound, containerPath)
     }
     const boundary = this.boundaryFor(opts?.cwd, filePath)
     if (boundary === undefined) return await this.config.local.resolve(filePath, opts)
-    const containerPath = toContainerPath(boundary, filePath, opts?.cwd ?? boundary.hostRoot)
-    return {
-      targetKey: encode(boundary, this.initiatorId(), containerPath),
-      displayPath: toHostPath(boundary, containerPath) ?? containerPath,
-    }
+    return this.routed(boundary, toContainerPathFrom(boundary, filePath, opts?.cwd))
   }
 
   /** The container bound to the turn's session, if any. */
@@ -179,7 +175,7 @@ export class RoutingFileSystem extends FileSystem {
   ): Promise<FsPathInfo | undefined> {
     const boundary = this.boundaryFor(opts?.cwd, filePath)
     if (boundary === undefined) return await this.config.local.lstat(filePath, opts, signal)
-    const containerPath = toContainerPath(boundary, filePath, opts?.cwd ?? boundary.hostRoot)
+    const containerPath = toContainerPathFrom(boundary, filePath, opts?.cwd)
     return await (await this.config.containers.backends(boundary)).files.lstat(containerPath, signal)
   }
 
@@ -297,6 +293,25 @@ export class RoutingFileSystem extends FileSystem {
     return (await this.config.containers.backends(routed.boundary)).files
   }
 
+  /** One target routed into a container path. */
+  private routed(boundary: ContainerBoundary, containerPath: string): FsTarget {
+    return {
+      targetKey: encode(boundary, this.initiatorId(), containerPath),
+      displayPath: toHostPath(boundary, containerPath) ?? containerPath,
+    }
+  }
+
+  /**
+   * One target standing in for a path the bound session cannot reach.
+   * @param boundary - the session's container binding.
+   * @param containerPath - the unmapped container path the caller named.
+   * @returns a target that reads as absent instead of reaching the host.
+   */
+  private unmapped(boundary: ContainerBoundary, containerPath: string): FsTarget {
+    const synthetic = `${UNMAPPED_ROOT}/${containerPath.replace(/[\\/]+/gu, '_')}`
+    return { targetKey: encode(boundary, this.initiatorId(), synthetic), displayPath: synthetic }
+  }
+
   /** The calling agent's session id, when a turn owns this call. */
   private initiatorId(): string | undefined {
     return this.ctx.get('agents')?.currentInitiator()?.session.id
@@ -319,7 +334,11 @@ export class RoutingFileSystem extends FileSystem {
     // which would silently send a container read to the host filesystem.
     if (filePath.startsWith('/') && bound !== undefined) return bound
 
-    const base = cwd ?? this.config.fallbackCwd
+    // The mapping, not the caller's current directory, decides the execution
+    // world: a directory that left the project still means this session's
+    // workspace, while a directory the mapping cannot express falls back to the
+    // session root instead of turning a relative call into a host read.
+    const base = bound === undefined ? (cwd ?? this.config.fallbackCwd) : hostBase(bound, cwd)
     const absolute = path.isAbsolute(filePath) ? path.normalize(filePath) : path.resolve(base, filePath)
     if (bound !== undefined) {
       // The binding owns the session's workspace, not the whole filesystem.
@@ -354,7 +373,7 @@ export class RoutingFileSystem extends FileSystem {
     const initiator = this.ctx.get('agents')?.currentInitiator()
     const bound = initiator === undefined ? undefined : this.config.targets.containerOf(initiator.session.id)
     if (bound === undefined) return false
-    const base = cwd ?? this.config.fallbackCwd
+    const base = hostBase(bound, cwd)
     const absolute = path.isAbsolute(filePath) ? path.normalize(filePath) : path.resolve(base, filePath)
     return !mapsInto(bound, absolute)
   }

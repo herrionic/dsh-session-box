@@ -43,7 +43,7 @@ it behaves exactly as it did before this plugin existed.
 
 ## Requirements
 
-- **DeepSeek Harness** `0.2.0-rc.2`. Every harness package this plugin declares is published
+- **DeepSeek Harness** `0.2.1-rc.2`. Every harness package this plugin declares is published
   on npm, so no harness checkout is needed to install or build it.
 - **Node.js** `^22.19` or `>=24`.
 - A reachable **SessionBox server** and an API token for it.

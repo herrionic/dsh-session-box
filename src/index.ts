@@ -45,6 +45,7 @@ import type {} from '@deepseek-ai/dsh-commands'
 import type {} from '@deepseek-ai/dsh-tools'
 import type {} from '@deepseek-ai/dsh-sandbox-policy'
 import type {} from '@deepseek-ai/dsh-system-prompt'
+import type {} from '@deepseek-ai/dsh-working-directory'
 
 import { Config as configSchema, resolveConfig, type Config as PluginConfig, type ResolvedConfig } from './config.ts'
 import { deferredBackend } from './deferred.ts'
@@ -201,7 +202,11 @@ export class SessionBoxService extends TypertRemoteService {
       const waiting = this.pending.get(session.id)
       if (waiting === undefined) return
       this.pending.delete(session.id)
-      session.append('user/message', reminderMessage(waiting, session.header.cwd ?? process.cwd()), { surfaceOp: 'append' })
+      session.append(
+        'user/message',
+        reminderMessage(waiting, this.workspaceRoot(session), this.currentDirectory(session)),
+        { surfaceOp: 'append' },
+      )
     })
     ctx.on('session/disposed', (session) => { this.targets.forget(session.id) })
     ctx.on('agent/created', ({ agent }) => { this.installAgent(agent) })
@@ -527,6 +532,10 @@ export class SessionBoxService extends TypertRemoteService {
    * @param target - the new target.
    */
   private bind(session: Session, target: ExecutionTarget): void {
+    // `header.cwd` names the original project, not the directory operations
+    // currently run in: it is the mapping identity every routed path is
+    // expressed against, and the working-directory service owns the current
+    // directory beside it.
     const hostRoot = session.header.cwd ?? process.cwd()
     this.targets.set(session.id, target, hostRoot)
     this.stored.set(session.id, target)
@@ -599,7 +608,11 @@ export class SessionBoxService extends TypertRemoteService {
     this.bind(session, target)
     if (this.hasProtectedHead(session)) {
       try {
-        session.append('user/message', reminderMessage(target, session.header.cwd ?? process.cwd()), { surfaceOp: 'append' })
+        session.append(
+          'user/message',
+          reminderMessage(target, this.workspaceRoot(session), this.currentDirectory(session)),
+          { surfaceOp: 'append' },
+        )
       } catch (error: unknown) {
         // The switch already happened and is durable; only the transcript notice
         // is lost, and the standing runtime-context line still tells the model
@@ -665,9 +678,13 @@ export class SessionBoxService extends TypertRemoteService {
     try {
       // `pwsh` runs on a Windows host and does not exist in a Linux container;
       // restricting it masks the inherited registration for this agent only.
-      disposers.push(tools.restrict({ deny: ['pwsh', ...CONTAINER_DENIED_TOOLS] }))
+      // The terminal tools ship in an optional bundle, and `restrict()` refuses
+      // a name this harness does not register, so the mask carries only tools
+      // that actually exist here: one absent tool must not discard the rest.
+      const deny = ['pwsh', ...CONTAINER_DENIED_TOOLS].filter((name) => tools.get(name) !== undefined)
+      if (deny.length > 0) disposers.push(tools.restrict({ deny }))
     } catch {
-      // The preset may not offer a PowerShell tool at all.
+      // A preset that exposes no tool at all still keeps its surface.
     }
     try {
       // The container is always Linux, so this session needs the bash tool even
@@ -684,10 +701,42 @@ export class SessionBoxService extends TypertRemoteService {
       disposers.push(systemPrompt.context({
         name: 'sessionbox:execution-target',
         order: systemPrompt.getContextOrder('SANDBOX_POLICY') - 5,
-        text: () => contextText(this.targets.containerOf(agent.session.id), agent.session.header.cwd ?? process.cwd()),
+        text: () => contextText(
+          this.targets.containerOf(agent.session.id),
+          this.workspaceRoot(agent.session),
+          this.currentDirectory(agent.session),
+        ),
       }))
     }
     this.surfaces.set(agent, disposers)
+  }
+
+  /**
+   * The session's current directory for a model-visible notice.
+   *
+   * `Session.header.cwd` is the immutable original project identity. From this
+   * harness release on, the working-directory service owns the directory later
+   * operations run in, so a notice names that directory and falls back to the
+   * header only while the service is not mounted.
+   *
+   * @param session - the session whose directory is reported.
+   * @returns the current absolute directory.
+   */
+  private currentDirectory(session: Session): string {
+    return this.ctx.get('workingDirectory')?.get(session) ?? session.header.cwd ?? process.cwd()
+  }
+
+  /**
+   * The host-side identity of one session's workspace.
+   *
+   * It is the original project (`header.cwd`), which path routing maps onto the
+   * container's workspace root; it is deliberately not the current directory.
+   *
+   * @param session - the session whose workspace identity is reported.
+   * @returns the host directory that anchors the mapping.
+   */
+  private workspaceRoot(session: Session): string {
+    return session.header.cwd ?? process.cwd()
   }
 
   /** Read the volatile settings, with the credential resolved. */
@@ -718,16 +767,29 @@ export class SessionBoxService extends TypertRemoteService {
  * The standing runtime-context line for one execution world.
  *
  * Unlike the switch reminder this is part of every assembled request, so the
- * mapping stays visible after compaction, forks, and resumes.
+ * mapping stays visible after compaction, forks, and resumes. The current
+ * directory can move without changing the workspace, so the two are stated
+ * separately.
+ *
+ * @param boundary - the session's container binding, or undefined on the host.
+ * @param hostRoot - the host-side identity of the session workspace.
+ * @param currentDirectory - the directory the session works in right now.
+ * @returns the model-facing line.
  */
-function contextText(boundary: ContainerBoundary | undefined, hostRoot: string): string {
+function contextText(
+  boundary: ContainerBoundary | undefined,
+  hostRoot: string,
+  currentDirectory: string,
+): string {
   if (boundary === undefined) {
-    return `Execution target: the machine hosting the harness. File and shell tools work under ${hostRoot}.`
+    return `Execution target: the machine hosting the harness. File and shell tools operate on its filesystem; `
+      + `this session's workspace is ${hostRoot} and its current directory is ${currentDirectory}.`
   }
   return 'Execution target: SessionBox container '
     + `"${boundary.name}" (${boundary.containerId}, Linux). The read, write, edit, glob, grep, and shell tools `
-    + `operate on that container's filesystem, where ${boundary.workspace} is this session's workspace; `
-    + `${hostRoot} is only the harness-side identity of that workspace and is not shared with the container.`
+    + `operate on that container's filesystem, where ${boundary.workspace} is this session's workspace root and `
+    + `the current directory is ${currentDirectory}. ${hostRoot} is only the harness-side identity of that `
+    + 'workspace and is not shared with the container.'
 }
 
 /**
@@ -760,10 +822,21 @@ function targetOfReminder(event: SessionEvent): ExecutionTarget | undefined {
   return source.kind === 'sessionbox-target' ? source.target : undefined
 }
 
-function reminderMessage(target: ExecutionTarget, hostRoot: string): ReturnType<typeof createUserMessage> {
+/**
+ * One execution-target reminder message.
+ * @param target - the execution world the session now uses.
+ * @param hostRoot - the host-side identity of the session workspace.
+ * @param currentDirectory - the directory the session works in right now.
+ * @returns the reminder message to append.
+ */
+function reminderMessage(
+  target: ExecutionTarget,
+  hostRoot: string,
+  currentDirectory: string,
+): ReturnType<typeof createUserMessage> {
   const summary = `Execution target: ${target.kind === 'host' ? 'harness host' : `container "${target.name}"`}`
   return createUserMessage({
-    content: [{ type: 'text', text: reminderText(target, hostRoot) }],
+    content: [{ type: 'text', text: reminderText(target, hostRoot, currentDirectory) }],
     source: {
       kind: 'sessionbox-target',
       target,
@@ -778,15 +851,23 @@ function reminderMessage(target: ExecutionTarget, hostRoot: string): ReturnType<
  *
  * It states the two facts a model cannot infer: which paths exist in the world
  * its tools now touch, and that the host spelling of the session workspace is
- * an identity on the harness side rather than a shared directory.
+ * an identity on the harness side rather than a shared directory. The current
+ * directory can move without changing the workspace, so it is reported
+ * separately instead of being folded into the workspace path.
+ *
+ * @param target - the execution world the session now uses.
+ * @param hostRoot - the host-side identity of the session workspace.
+ * @param currentDirectory - the directory the session works in right now.
+ * @returns the reminder text.
  */
-function reminderText(target: ExecutionTarget, hostRoot: string): string {
+function reminderText(target: ExecutionTarget, hostRoot: string, currentDirectory: string): string {
   if (target.kind === 'host') {
     return [
       '<system-reminder>',
       'Execution target changed: this session now runs on the machine hosting the agent harness.',
       '',
-      `- The read, write, edit, glob, grep, and shell tools operate on the host filesystem again, with ${hostRoot} as the working directory.`,
+      `- The read, write, edit, glob, grep, and shell tools operate on the host filesystem again; this session's workspace is ${hostRoot}.`,
+      `- The current directory is ${currentDirectory}.`,
       '- The container from before this switch is no longer reachable from these tools; anything written inside it stayed there.',
       '</system-reminder>',
     ].join('\n')
@@ -796,9 +877,10 @@ function reminderText(target: ExecutionTarget, hostRoot: string): string {
     `Execution target changed: this session now runs inside the SessionBox container "${target.name}" (${target.containerId}, Linux).`,
     '',
     `- The read, write, edit, glob, grep, and shell tools operate on the container's filesystem, not on the machine hosting the harness.`,
-    `- The container path ${target.workspace} is this session's workspace.`,
+    `- The container path ${target.workspace} is this session's workspace root.`,
     `- ${hostRoot} is only the harness-side identity of that workspace. It is NOT a shared directory: files that lived there before this switch are not visible in the container, and files you create in the container do not appear there.`,
-    `- Relative paths resolve under ${target.workspace}; absolute container paths such as /etc/hostname are read from the container.`,
+    `- The current directory is ${currentDirectory}.`,
+    `- Relative paths resolve inside ${target.workspace}; absolute container paths such as /etc/hostname are read from the container.`,
     '- Commands run under Linux bash. The host shell tool is not available on this target.',
     '</system-reminder>',
   ].join('\n')

@@ -27,6 +27,16 @@ let ctx: Context
 let hostRoot: string
 let baseUrl: string
 
+/** The six terminal tools the plugin withholds from a container session. */
+const CONTAINER_TOOL_NAMES = [
+  'terminal_open',
+  'terminal_send',
+  'terminal_read',
+  'terminal_signal',
+  'terminal_close',
+  'terminal_list',
+] as const
+
 /** The per-call policy the tools would stamp, carrying the session identity. */
 function policy(sessionId: string) {
   return { mode: 'danger-full-access' as const, workspaceRoot: hostRoot, sessionId: SessionId(sessionId) }
@@ -137,6 +147,52 @@ describe('container routing', () => {
 
     expect(result.stdout.text).toContain('pwd @ /workspace')
     expect(server.execs.at(-1)?.cwd).toBe('/workspace')
+  })
+
+  it('keeps a relative path inside the container when the working directory left the project', async () => {
+    const sessionId = await boundSession()
+    const outside = await mkdtemp(join(tmpdir(), 'sessionbox-outside-'))
+    ctx.provide('agents', {
+      currentInitiator: () => ({ session: { id: sessionId } }),
+    } as never)
+    try {
+      const target = await ctx.fs.resolve('after-cd.txt', { cwd: outside })
+      await ctx.fs.writeText(target, 'still routed')
+      expect(server.files.get('/workspace/after-cd.txt')?.content).toBe('still routed')
+      await expect(readFile(join(hostRoot, 'after-cd.txt'), 'utf8')).rejects.toThrow()
+    } finally {
+      await rm(outside, { recursive: true, force: true })
+    }
+  })
+
+  it('resolves a relative path under the container directory a change named', async () => {
+    const sessionId = await boundSession()
+    ctx.provide('agents', {
+      currentInitiator: () => ({ session: { id: sessionId } }),
+    } as never)
+
+    // A `working_directory({ cd })` inside a bound session resolves through the
+    // router, so the service stores this container path, not a host path.
+    const target = await ctx.fs.resolve('inside.txt', { cwd: '/workspace/sub' })
+    await ctx.fs.writeText(target, 'nested')
+    expect(server.files.get('/workspace/sub/inside.txt')?.content).toBe('nested')
+  })
+
+  it('starts a command at the workspace root when its working directory left the project', async () => {
+    await boundSession()
+    server.execImpl = (command) => ({ exitCode: 0, stdout: `${command}\n`, stderr: '' })
+    const outside = await mkdtemp(join(tmpdir(), 'sessionbox-outside-'))
+    try {
+      const execution = await ctx.shell.execute(ctx.shell.resolve({
+        command: 'pwd',
+        workdir: outside,
+        sandboxPolicy: policy('bound'),
+      }))
+      await execution.result()
+      expect(server.execs.at(-1)?.cwd).toBe('/workspace')
+    } finally {
+      await rm(outside, { recursive: true, force: true })
+    }
   })
 
   it('keeps an unbound session on the host filesystem', async () => {
@@ -258,6 +314,26 @@ describe('the /sessionbox command', () => {
     expect(server.files.has('/workspace/from-command.txt')).toBe(true)
   })
 
+  it('reports the current directory beside the workspace identity', async () => {
+    // The harness tracks the session's directory separately from the original
+    // project (`header.cwd`), so a switch reminder names both.
+    ctx.provide('workingDirectory', { get: () => '/moved/elsewhere' } as never)
+    const session = ctx.sessions.create(SessionId('moved-directory'), { meta: { cwd: hostRoot } })
+    session.append('user/message', createUserMessage({
+      content: [{ type: 'text', text: 'hello' }],
+      source: { kind: 'user' },
+    }), { surfaceOp: 'append' })
+    await run('/sessionbox test-box', session)
+
+    const reminder = session.ownEvents().find(
+      (event) => event.type === 'user/message' && event.data.source.kind === 'sessionbox-target',
+    )
+    const text = (reminder as { data: { content: Array<{ text: string }> } }).data.content
+      .map((block) => block.text).join('\n')
+    expect(text).toContain('The current directory is /moved/elsewhere.')
+    expect(text).toContain(hostRoot)
+  })
+
   it('switches back to the host and says so', async () => {
     const session = ctx.sessions.create(SessionId('returning'), { meta: { cwd: hostRoot } })
     // A real message first, so both switches can record their reminder.
@@ -290,8 +366,12 @@ describe('the /sessionbox command', () => {
     // The terminal tools open their shell through `ctx.subprocess.spawnTerminal`,
     // and the subprocess seam forwards an allowlist of programs — so an
     // unrestricted terminal in a bound session would open the host's shell.
+    const registered = new Set(['pwsh', ...CONTAINER_TOOL_NAMES])
     const restrictions: Array<{ deny?: readonly string[] }> = []
     ctx.provide('tools', {
+      // `restrict()` refuses a name this harness does not register, so the
+      // plugin asks the registry which tools exist before building the mask.
+      get: (name: string) => registered.has(name) ? { name } : undefined,
       restrict: (options: { deny?: readonly string[] }) => {
         restrictions.push(options)
         return () => {}
@@ -307,9 +387,33 @@ describe('the /sessionbox command', () => {
     ctx.emit('agent/created', { agent } as never)
 
     const denied = restrictions.at(-1)?.deny ?? []
-    expect(denied).toContain('terminal_open')
-    expect(denied).toContain('terminal_list')
+    for (const name of CONTAINER_TOOL_NAMES) expect(denied).toContain(name)
     // The Windows host shell does not exist in a Linux container either.
     expect(denied).toContain('pwsh')
+  })
+
+  it('keeps the rest of the boundary when an optional tool is not registered', async () => {
+    // The `terminal_*` tools ship in an optional bundle. When that bundle is
+    // absent, `restrict()` would reject their names and discard the whole
+    // mask — including `pwsh` — so the plugin only names tools the registry
+    // actually has.
+    const restrictions: Array<{ deny?: readonly string[] }> = []
+    ctx.provide('tools', {
+      get: (name: string) => name === 'pwsh' ? { name } : undefined,
+      restrict: (options: { deny?: readonly string[] }) => {
+        restrictions.push(options)
+        return () => {}
+      },
+    } as never)
+
+    const session = ctx.sessions.create(SessionId('bound-optional-tools'), { meta: { cwd: hostRoot } })
+    await run('/sessionbox test-box', session)
+    const agent = {
+      session,
+      ctx: { get: (name: string) => (name === 'tools' ? ctx.get('tools') : undefined) },
+    }
+    ctx.emit('agent/created', { agent } as never)
+
+    expect(restrictions.at(-1)?.deny).toEqual(['pwsh'])
   })
 })

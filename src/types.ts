@@ -23,12 +23,14 @@ export interface HostBoundary {
 /**
  * A SessionBox container is the execution world for one session.
  *
- * `hostRoot` is the session's own `header.cwd`. DSH keeps that host path in the
- * session header because a set of host-side observers (workspace validation,
- * git snapshots, file-reference indexing, AGENTS.md discovery, skill discovery)
- * read it with `node:fs` directly; the path stays real and readable, and the
- * container simply never shares its contents. Path routing uses it as the
- * namespace anchor, not as a mirror.
+ * `hostRoot` is the session's original project (`header.cwd`). DSH keeps that
+ * host path in the session header because a set of host-side observers
+ * (workspace validation, git snapshots, file-reference indexing, AGENTS.md
+ * discovery, skill discovery) read it with `node:fs` directly; the path stays
+ * real and readable, and the container simply never shares its contents. Path
+ * routing uses it as the namespace anchor — not as a mirror, and not as the
+ * session's current directory, which the harness tracks separately and can move
+ * without changing this anchor.
  */
 export interface ContainerBoundary {
   kind: 'container'

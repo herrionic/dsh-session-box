@@ -30,7 +30,7 @@ DeepSeek Harness 插件 `@sessionbox/dsh-plugin`：把 [DeepSeek Harness](https:
 
 ## 环境要求
 
-- **DeepSeek Harness** `0.2.0-rc.2`。本插件声明的所有 Harness 包都已发布到 npm，因此安装与构建都不需要 Harness 源码仓库。
+- **DeepSeek Harness** `0.2.1-rc.2`。本插件声明的所有 Harness 包都已发布到 npm，因此安装与构建都不需要 Harness 源码仓库。
 - **Node.js** `^22.19` 或 `>=24`。
 - 一个可访问的 **SessionBox 服务端**，以及对应的 API token。
 - 带 `bash` 的 Linux 容器镜像。镜像缺少 `ripgrep` 时会用 `apt` 安装一次（`provisionRipgrep`）。

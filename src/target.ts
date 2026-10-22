@@ -58,6 +58,88 @@ export function joinContainer(root: string, relative: string): string {
 }
 
 /**
+ * The host directory a caller's relative path resolves against.
+ *
+ * A working directory outside the mapping has no route into the container, so
+ * relative paths resolve at the session root instead. Callers use this while
+ * deciding which execution world owns a path, before any translation.
+ *
+ * @param boundary - the session's container binding.
+ * @param cwd - the caller's working directory in host terms.
+ * @returns `cwd` when it is inside the mapped root, else the session root.
+ */
+export function hostBase(boundary: ContainerBoundary, cwd: string | undefined): string {
+  return cwd !== undefined && hostContains(boundary.hostRoot, cwd) ? cwd : boundary.hostRoot
+}
+
+/**
+ * The container directory a caller's relative path resolves against.
+ *
+ * The working-directory service stores either the host spelling of the session
+ * root or the container path a `working_directory({ cd })` resolved to, so both
+ * forms are accepted. A directory outside both cannot be expressed in the
+ * container, and relative paths then resolve at the workspace root.
+ *
+ * @param boundary - the session's container binding.
+ * @param cwd - the caller's working directory in host or container terms.
+ * @returns the container-absolute directory.
+ */
+export function containerBase(boundary: ContainerBoundary, cwd: string | undefined): string {
+  if (cwd !== undefined) {
+    if (hostContains(boundary.hostRoot, cwd)) return toContainerPath(boundary, cwd, boundary.hostRoot)
+    const normalized = posix.normalize(cwd)
+    if (containerContains(boundary, normalized)) return normalized
+  }
+  return boundary.workspace
+}
+
+/**
+ * Translate one caller path into the session's container.
+ *
+ * Absolute host paths keep their existing meaning — mapped inside the session
+ * root, refused outside it — and an absolute POSIX path names the container's
+ * own tree. A relative path resolves against {@link containerBase}, so a
+ * directory change that left the project degrades to the workspace root instead
+ * of failing the call.
+ *
+ * @param boundary - the session's container binding.
+ * @param input - the path the caller supplied.
+ * @param cwd - the caller's working directory in host or container terms.
+ * @returns the container-absolute path.
+ */
+export function toContainerPathFrom(boundary: ContainerBoundary, input: string, cwd: string | undefined): string {
+  if (input.startsWith('/')) return posix.normalize(input)
+  if (path.isAbsolute(input)) return toContainerPath(boundary, input, hostBase(boundary, cwd))
+  return posix.normalize(posix.join(containerBase(boundary, cwd), toContainerRelative(input)))
+}
+
+/**
+ * The container directory one shell or subprocess execution starts in.
+ *
+ * These seams carry a fully resolved working directory, which can be the host
+ * spelling of the session root, a container path a directory change resolved
+ * to, or a host path outside the project after such a change. The last has no
+ * container meaning, so the child starts at the workspace root: it stays inside
+ * the session's world instead of failing or reaching the host.
+ *
+ * @param boundary - the session's container binding.
+ * @param workdir - the resolved working directory the caller named.
+ * @returns the container-absolute starting directory.
+ */
+export function containerWorkdir(boundary: ContainerBoundary, workdir: string): string {
+  if (workdir.startsWith('/')) return posix.normalize(workdir)
+  if (path.isAbsolute(workdir)) {
+    return hostContains(boundary.hostRoot, workdir)
+      ? toContainerPath(boundary, workdir, boundary.hostRoot)
+      : boundary.workspace
+  }
+  // A relative workdir resolves at the workspace root; one that escapes it has
+  // no meaning inside the session's world.
+  const joined = posix.normalize(posix.join(boundary.workspace, toContainerRelative(workdir)))
+  return containerContains(boundary, joined) ? joined : boundary.workspace
+}
+
+/**
  * Translate one caller-supplied path into a container path.
  *
  * Accepted inputs, in order:
@@ -131,7 +213,7 @@ export class ExecutionTargetRegistry {
    * Bind one session to a container, or clear its binding back to the host.
    * @param sessionId - the session whose execution world changes.
    * @param target - the new target; `{kind:'host'}` removes the binding.
-   * @param hostRoot - the session's `header.cwd`, used as the routing prefix.
+   * @param hostRoot - the session's original project root, used as the routing prefix.
    */
   set(sessionId: SessionId, target: ExecutionTarget, hostRoot: string): void {
     if (target.kind === 'host') {

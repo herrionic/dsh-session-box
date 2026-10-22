@@ -8,8 +8,9 @@
  * out-of-process subagents, and the local shell executors themselves). The
  * initiator alone cannot separate them —an in-turn git probe and an in-turn
  * ripgrep look identical —so routing is opt-in per program: a call runs in the
- * container only when a turn owns it, its working directory maps into the
- * container, and its program is on the configured list.
+ * container when a turn owns it and its program is on the configured list. The
+ * working directory then only picks the starting directory inside the
+ * container; one that left the project starts at the workspace root.
  *
  * Everything else stays on the host, which is the safe direction: an
  * unrouted program degrades a container session's convenience, while a
@@ -28,8 +29,7 @@ import type {
   SubprocessTerminalHandle,
   SubprocessTerminalSpawnSpec,
 } from '@deepseek-ai/dsh-subprocess'
-import { toContainerPath } from './target.ts'
-import { hostContains } from './target.ts'
+import { containerWorkdir, toContainerPath } from './target.ts'
 import type { ContainerAccess, ContainerBoundary } from './types.ts'
 import type { ExecutionTargetRegistry } from './target.ts'
 
@@ -87,12 +87,10 @@ export class RoutingSubprocessProvider extends SubprocessRuntime {
 
     return backends.subprocess.spawn(spec, {
       // A working directory outside the mapped root has no container meaning,
-      // and the host must not run the child either: it runs in the container
-      // from the workspace root, where a host path argument simply does not
-      // exist — the same absence `read` and `write` report.
-      workdir: hostContains(boundary.hostRoot, spec.cwd)
-        ? toContainerPath(boundary, spec.cwd, boundary.hostRoot)
-        : boundary.workspace,
+      // and the host must not run the child either: it starts at the workspace
+      // root, where a host path argument simply does not exist — the same
+      // absence `read` and `write` report.
+      workdir: containerWorkdir(boundary, spec.cwd),
       translateArgv: (argv) => this.translateArgv(argv, boundary),
       timeoutMs: this.config.defaultTimeoutMs,
     })

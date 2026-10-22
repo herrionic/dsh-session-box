@@ -14,7 +14,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import { ShellExecutor } from '@deepseek-ai/dsh-shell'
 import type { ShellExecRequest, ShellExecSpec, ShellExecution } from '@deepseek-ai/dsh-shell'
 import type { SandboxMode } from '@deepseek-ai/dsh-sandbox'
-import { toContainerPath } from './target.ts'
+import { containerWorkdir } from './target.ts'
 import type { ContainerAccess, ContainerBoundary } from './types.ts'
 import type { ExecutionTargetRegistry } from './target.ts'
 
@@ -54,7 +54,7 @@ export class RoutingShellExecutor extends ShellExecutor {
     const boundary = this.boundaryFor(spec)
     if (boundary === undefined) return await this.config.local.execute(spec)
     const shell = (await this.config.containers.backends(boundary)).shell
-    return await shell.execute(spec, toContainerPath(boundary, spec.workdir, boundary.hostRoot))
+    return await shell.execute(spec, containerWorkdir(boundary, spec.workdir))
   }
 
   /**
